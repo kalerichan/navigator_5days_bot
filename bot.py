@@ -180,7 +180,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "🌸 Привет! Я бот-помощник «Точки опоры».\nВыбери, что хочешь получить:",
+        "🌸 Привет! Я навигатор-бот.\nВыбери, что хочешь получить:",
         reply_markup=reply_markup
     )
 
