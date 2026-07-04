@@ -301,7 +301,7 @@ async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         keyboard = [[InlineKeyboardButton("🗓 Начать челлендж", callback_data="start_challenge_from_checklist")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        schedule_message(update.effective_chat.id, text_5min, 300, reply_markup)
+        schedule_message(update.effective_chat.id, text_5min, 60, reply_markup)
 
         text_1hour = (
             "🌷 Милая, я вижу, что ты пока не решилась…\n\n"
