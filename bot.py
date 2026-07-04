@@ -202,16 +202,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
         return
 
-    keyboard = [
-        [InlineKeyboardButton("📋 Чек-лист «Спасатель»", callback_data="checklist")],
-        [InlineKeyboardButton("🗓 Челлендж «5 дней»", callback_data="challenge")],
-        [InlineKeyboardButton("💬 Написать мне", url=DIAGNOSTIC_LINK)]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "🌸 С возвращением! Я Навигатор-бот.\nЧто хочешь получить сегодня?",
-        reply_markup=reply_markup
-    )
+keyboard = [
+    [InlineKeyboardButton("📋 Чек-лист «Спасатель»", callback_data="checklist")],
+    [InlineKeyboardButton("🗓 Челлендж «5 дней»", callback_data="challenge")],
+    [InlineKeyboardButton("💬 Написать мне", url=DIAGNOSTIC_LINK)]
+]
+reply_markup = InlineKeyboardMarkup(keyboard)
+await update.message.reply_text(
+    "🌸 Привет, дорогая! Рада видеть тебя снова! 💖\n\n"
+    "Ты уже подписана на мой канал, и я благодарна тебе за это. Теперь все материалы открыты для тебя.\n\n"
+    "Здесь ты можешь:\n"
+    "📋 Получить чек-лист «10 признаков Спасателя» — чтобы увидеть свои паттерны.\n"
+    "🗓 Пройти бесплатный 5-дневный челлендж «5 дней ясности» — с заданиями и голосовыми разборами.\n"
+    "💬 Написать мне лично, если захочешь разобрать свою ситуацию глубже.\n\n"
+    "Выбери, что хочешь получить сегодня:",
+    reply_markup=reply_markup
+)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
