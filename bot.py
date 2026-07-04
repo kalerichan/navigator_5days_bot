@@ -16,7 +16,7 @@ DIAGNOSTIC_LINK = os.environ.get('DIAGNOSTIC_LINK', 'https://t.me/valeriasereda'
 if not TOKEN:
     raise ValueError("Переменная окружения BOT_TOKEN не задана!")
 
-# ================== ПУТИ К ФАЙЛАМ (БЕЗ ПАПКИ files) ==================
+# ================== ПУТИ К ФАЙЛАМ ==================
 CHECKLIST_PDF = "checklist_spasatel.pdf"
 AUDIO_FILES = {
     "track1": {
@@ -46,6 +46,7 @@ AUDIO_FILES = {
 def init_db():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
+    # Создаём таблицу
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -60,6 +61,13 @@ def init_db():
             finished BOOLEAN DEFAULT 0
         )
     ''')
+    # Проверяем наличие новых полей и добавляем, если их нет
+    c.execute("PRAGMA table_info(users)")
+    columns = [col[1] for col in c.fetchall()]
+    if 'reminder_5min_sent' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN reminder_5min_sent BOOLEAN DEFAULT 0")
+    if 'reminder_1hour_sent' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN reminder_1hour_sent BOOLEAN DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -128,6 +136,11 @@ def schedule_message(chat_id, text, delay_seconds, reply_markup=None):
 async def send_scheduled_message(chat_id, text, reply_markup):
     try:
         bot = application.bot
+        # Проверяем, не начат ли челлендж
+        user = get_user(chat_id)
+        if user and user['challenge_started']:
+            # Если челлендж уже начат, напоминания не отправляем
+            return
         if await is_subscribed(bot, chat_id):
             await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode='HTML')
         else:
@@ -250,9 +263,9 @@ async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption="📋 Держи обещанный чек-лист «10 неочевидных признаков, что ты играешь роль Спасателя» 👇\n\nПосмотри внимательно – там много неожиданных открытий 🌸"
             )
         now = datetime.now()
-        update_user(user_id, checklist_sent_time=now, reminder_5min_sent=0, reminder_1hour_sent=0)
+        update_user(user_id, checklist_sent_time=now)
 
-        # 1. Отправляем первое теплое сообщение через 5 минут
+        # Через 5 минут: тёплое сообщение с вопросом
         text_5min = (
             "🌸 Ну что, дорогая? Сколько пунктов совпало? 😊\n\n"
             "Если больше трёх – я очень рекомендую пройти мой бесплатный челлендж «5 дней ясности».\n"
@@ -261,16 +274,16 @@ async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         keyboard = [[InlineKeyboardButton("🗓 Начать челлендж", callback_data="start_challenge_from_checklist")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        schedule_message(update.effective_chat.id, text_5min, 300, reply_markup)  # 5 минут
+        schedule_message(update.effective_chat.id, text_5min, 300, reply_markup)
 
-        # 2. Если не начал – через 1 час ещё одно напоминание
+        # Через 1 час: второе напоминание с грустным настроем
         text_1hour = (
             "🌷 Милая, я вижу, что ты пока не решилась…\n\n"
             "Знаешь, мне очень грустно смотреть на ситуации, когда собственная жизнь откладывается на потом.\n"
             "А ведь всего 10–15 минут в день в течение 5 дней – и ты почувствуешь такие перемены, что сама удивишься! ✨\n\n"
             "Ты достойна этого времени для себя. Давай попробуем? 💗"
         )
-        schedule_message(update.effective_chat.id, text_1hour, 3600, reply_markup)  # 1 час
+        schedule_message(update.effective_chat.id, text_1hour, 3600, reply_markup)
 
         if query:
             await query.edit_message_text(
