@@ -16,7 +16,7 @@ DIAGNOSTIC_LINK = os.environ.get('DIAGNOSTIC_LINK', 'https://t.me/valeriasereda'
 if not TOKEN:
     raise ValueError("Переменная окружения BOT_TOKEN не задана!")
 
-# ================== ПУТИ К ФАЙЛАМ (С ПРОВЕРКОЙ) ==================
+# ================== ПУТИ К ФАЙЛАМ ==================
 def find_file(filename):
     possible_paths = [
         filename,
@@ -202,22 +202,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
         return
 
-keyboard = [
-    [InlineKeyboardButton("📋 Чек-лист «Спасатель»", callback_data="checklist")],
-    [InlineKeyboardButton("🗓 Челлендж «5 дней»", callback_data="challenge")],
-    [InlineKeyboardButton("💬 Написать мне", url=DIAGNOSTIC_LINK)]
-]
-reply_markup = InlineKeyboardMarkup(keyboard)
-await update.message.reply_text(
-    "🌸 Привет, дорогая! Рада видеть тебя снова! 💖\n\n"
-    "Ты уже подписана на мой канал, и я благодарна тебе за это. Теперь все материалы открыты для тебя.\n\n"
-    "Здесь ты можешь:\n"
-    "📋 Получить чек-лист «10 признаков Спасателя» — чтобы увидеть свои паттерны.\n"
-    "🗓 Пройти бесплатный 5-дневный челлендж «5 дней ясности» — с заданиями и голосовыми разборами.\n"
-    "💬 Написать мне лично, если захочешь разобрать свою ситуацию глубже.\n\n"
-    "Выбери, что хочешь получить сегодня:",
-    reply_markup=reply_markup
-)
+    # Если пользователь уже подписан – информативное приветствие
+    keyboard = [
+        [InlineKeyboardButton("📋 Чек-лист «Спасатель»", callback_data="checklist")],
+        [InlineKeyboardButton("🗓 Челлендж «5 дней»", callback_data="challenge")],
+        [InlineKeyboardButton("💬 Написать мне", url=DIAGNOSTIC_LINK)]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "🌸 Привет, дорогая! Рада видеть тебя снова! 💖\n\n"
+        "Ты уже подписана на мой канал, и я благодарна тебе за это. Теперь все материалы открыты для тебя.\n\n"
+        "Здесь ты можешь:\n"
+        "📋 Получить чек-лист «10 признаков Спасателя» — чтобы увидеть свои паттерны.\n"
+        "🗓 Пройти бесплатный 5-дневный челлендж «5 дней ясности» — с заданиями и голосовыми разборами.\n"
+        "💬 Написать мне лично, если захочешь разобрать свою ситуацию глубже.\n\n"
+        "Выбери, что хочешь получить сегодня:",
+        reply_markup=reply_markup
+    )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -295,7 +296,6 @@ async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         now = datetime.now()
         update_user(user_id, checklist_sent_time=now)
 
-        # Отложенные сообщения через 1 минуту и 1 час
         text_1min = (
             "🌸 Ну что, дорогая? Сколько пунктов совпало? 😊\n\n"
             "Если больше трёх – я очень рекомендую пройти мой бесплатный челлендж «5 дней ясности».\n"
@@ -315,7 +315,6 @@ async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         schedule_message(update.effective_chat.id, text_1hour, 3600, reply_markup)
 
         if query:
-            # Задержка 2 секунды перед подтверждением
             await asyncio.sleep(2)
             await query.edit_message_text(
                 "🌺 Чек-лист уже у тебя! Скоро вернусь к тебе, а ты пока изучи чек лист и посмотри насколько откликается 💖"
@@ -350,7 +349,6 @@ async def handle_challenge_start(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(
         "🌸 Отлично! Давай начнём с теста «Индекс потери себя». Ответь честно – это поможет подобрать идеальный для тебя трек 💗"
     )
-    # Задержка 2 секунды перед первым вопросом
     await asyncio.sleep(2)
     await send_question(update, context, question_index=0)
 
@@ -445,13 +443,9 @@ async def handle_test_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     new_score = user['score'] + points
     update_user(user_id, score=new_score)
 
-    # 1. Показываем фидбек (редактируем текущее сообщение)
     await query.edit_message_text(f"✅ Выбрано: {questions[q_idx]['options'][int(opt_idx)][0]}")
-
-    # 2. Ждём 2 секунды, чтобы пользователь увидел фидбек
     await asyncio.sleep(2)
 
-    # 3. Удаляем сообщение с фидбеком (текущее сообщение)
     try:
         await context.bot.delete_message(
             chat_id=update.effective_chat.id,
@@ -460,11 +454,9 @@ async def handle_test_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.warning(f"Не удалось удалить сообщение с фидбеком: {e}")
 
-    # 4. Отправляем следующий вопрос или завершаем тест
     if q_idx + 1 < len(questions):
         await send_question(update, context, q_idx + 1)
     else:
-        # Задержка 2 секунды перед результатом
         await asyncio.sleep(2)
         await update.effective_chat.send_message("🌸 Тест завершён! Сейчас я скажу, какой трек тебе подходит 💖")
         await asyncio.sleep(2)
@@ -487,7 +479,7 @@ async def process_test_result(update: Update, context: ContextTypes.DEFAULT_TYPE
             "⚖️ Ты на грани потери\n"
             "Ты ещё помнишь себя настоящую, но всё чаще выбираешь «надо» вместо «хочу». Твоё тело уже подаёт сигналы. Пора остановиться и посмотреть, куда утекает твоя энергия."
         )
-    else:  # 15-18
+    else:
         track = 3
         track_desc = (
             "🕯️ Ты забыла о себе\n"
@@ -496,15 +488,12 @@ async def process_test_result(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     update_user(user_id, track=track, current_day=1, start_time=datetime.now())
 
-    # Отправляем результат с задержкой 5 секунд
     result_text = f"🌸 Твой результат: {score} баллов.\n\n{track_desc}\n\nТеперь начинаем челлендж! Сегодня – день 1. Готова? 💖"
     await update.effective_chat.send_message(result_text)
-
-    # Задержка 5 секунд перед отправкой утреннего задания
     await asyncio.sleep(5)
     await send_morning_task(update, context, track, 1)
 
-# ===== Тексты утренних заданий (полные) =====
+# ===== Тексты утренних заданий =====
 MORNING_TEXTS = {
     (1,1): "☀️ День 1. Мои точки опоры\n\nСегодня мы не будем искать проблемы. Мы будем искать то, что тебя держит.\n\nЗадание:\n- Возьми лист бумаги или заметки в телефоне.\n- Напиши 5 вещей, занятий, моментов, которые возвращают тебе ощущение «я». Это может быть что угодно: утренний кофе в одиночестве, пробежка, звонок подруге, с которой можно молчать, работа над конкретной задачей, запах книги.\n- Напротив каждого пункта напиши, когда в последний раз ты это делала.\n- Выбери один пункт и встрой его в своё расписание на завтра. Прямо сейчас реши, во сколько и как.\n\nВечером я пришлю тебе голосовое сообщение. А пока дыши глубже. Ты в порядке 🌸",
     (1,2): "☀️ День 2. Границы как забота\n\nУмение говорить «нет» — это не про жесткость. Это про заботу о себе.\n\nЗадание:\n- Вспомни одну недавнюю ситуацию, где ты сказала «да», но внутри чувствовала «нет». Или где ты хотела отказаться, но не смогла.\n- Напиши, что именно ты чувствовала в тот момент: вину, страх обидеть, желание быть хорошей?\n- Теперь перепиши эту ситуацию. Напиши идеальный сценарий твоего «нет» — без оправданий, но уважительно.\n- Прочитай написанное вслух. Как ощущения?\n\nЭто упражнение — репетиция. В следующий раз мозгу будет легче 💪",
@@ -538,8 +527,6 @@ async def send_morning_task(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     text = MORNING_TEXTS.get((track, day), "Утреннее задание для этого дня ещё не готово, но скоро будет 🌸")
     await context.bot.send_message(chat_id=user_id, text=text)
-
-    # Задержка 2 секунды перед планированием вечернего аудио
     await asyncio.sleep(2)
 
     evening_delay = 8 * 3600
@@ -592,7 +579,6 @@ async def send_morning_task_by_chat(chat_id, track, day):
 
     text = MORNING_TEXTS.get((track, day), "Утреннее задание для этого дня ещё не готово, но скоро будет 🌸")
     await bot.send_message(chat_id=chat_id, text=text)
-
     await asyncio.sleep(2)
 
     evening_delay = 8 * 3600
@@ -614,6 +600,7 @@ async def send_final_invitation(chat_id):
             reply_markup=reply_markup
         )
         return
+
     text = (
         "🌟 Ты прошла челлендж «5 дней ясности»! Это огромный шаг – я горжусь тобой 💖\n\n"
         "Если ты чувствуешь, что хочешь разобрать именно твою ситуацию лично – приглашаю на сессию «Разворот».\n"
