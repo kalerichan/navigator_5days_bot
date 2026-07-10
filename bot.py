@@ -3,7 +3,7 @@ import asyncio
 import sqlite3
 import os
 from datetime import datetime, timedelta
-import pytz  # не забудьте установить: pip install pytz
+import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -140,7 +140,6 @@ scheduler = AsyncIOScheduler()
 scheduler.start()
 
 def schedule_message(chat_id, text, run_date, reply_markup=None):
-    """Планирует отправку сообщения в конкретное время (datetime)."""
     scheduler.add_job(
         send_scheduled_message,
         trigger=DateTrigger(run_date=run_date),
@@ -150,7 +149,6 @@ def schedule_message(chat_id, text, run_date, reply_markup=None):
     )
 
 def schedule_voice(chat_id, audio_path, run_date, track, day):
-    """Планирует отправку голосового сообщения в конкретное время."""
     scheduler.add_job(
         send_evening_audio,
         trigger=DateTrigger(run_date=run_date),
@@ -200,11 +198,9 @@ async def send_evening_audio(chat_id, audio_path, track, day):
         file_size = os.path.getsize(audio_path)
         logging.info(f"Отправка аудио: {audio_path}, размер: {file_size} байт, трек {track}, день {day}")
 
-        # Отправляем отдельно текстовое сообщение с кратким содержанием и похвалой
         caption_text = get_voice_caption(track, day)
         await bot.send_message(chat_id=chat_id, text=caption_text)
 
-        # Затем отправляем сам голосовой файл (без подписи)
         with open(audio_path, 'rb') as f:
             await bot.send_voice(chat_id=chat_id, voice=f)
 
@@ -213,7 +209,6 @@ async def send_evening_audio(chat_id, audio_path, track, day):
         if day == 5:
             await send_final_invitation(chat_id)
         else:
-            # После отправки вечернего аудио планируем следующее утро (день+1) на 9:00 МСК
             await schedule_next_morning(chat_id, track, day + 1)
 
     except FileNotFoundError:
@@ -230,7 +225,6 @@ async def send_evening_audio(chat_id, audio_path, track, day):
         )
 
 def get_voice_caption(track, day):
-    """Возвращает текст с кратким описанием задания и похвалой."""
     captions = {
         (1,1): "✨ Ты отлично справилась с днём 1! Ты искала свои точки опоры — это важный шаг к себе. Горжусь тобой 💖",
         (1,2): "💪 День 2 пройден! Ты училась говорить «нет» и защищать свои границы – это смело. Продолжай в том же духе!",
@@ -251,7 +245,6 @@ def get_voice_caption(track, day):
     return captions.get((track, day), "🌙 Отличная работа! Ты справляешься с челленджем прекрасно 💖")
 
 def get_moscow_time(hour, minute=0):
-    """Возвращает datetime с заданным часом и минутой по московскому времени на сегодня (или завтра, если время уже прошло)."""
     tz = pytz.timezone('Europe/Moscow')
     now = datetime.now(tz)
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -260,44 +253,21 @@ def get_moscow_time(hour, minute=0):
     return target
 
 def get_moscow_time_for_day(day_offset, hour, minute=0):
-    """Возвращает datetime для указанного дня (day_offset = 0 сегодня, 1 завтра и т.д.) с заданным часом/минутой по МСК."""
     tz = pytz.timezone('Europe/Moscow')
     now = datetime.now(tz)
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=day_offset)
-    # Если сегодняшний день_offset=0 и время уже прошло, переносим на день_offset+1?
-    # Но мы будем вызывать эту функцию только для дней >=2, где day_offset >=1, поэтому проверка не критична.
     return target
 
 async def schedule_next_morning(chat_id, track, next_day):
-    """Планирует утреннее задание для следующего дня на 9:00 МСК."""
     if next_day > 5:
         return
-    # Для дней 2-5: утро в 9:00 МСК, вечер в 19:00 МСК
-    # Вычисляем дату: день next_day наступает через (next_day-1) дней от старта, но мы планируем по календарю.
-    # Проще: планируем на завтра (если next_day=2) в 9:00, на послезавтра (next_day=3) в 9:00 и т.д.
-    # Но мы не знаем, какой день недели, просто считаем дни от сегодня.
-    # Мы уже знаем, что утро дня 1 отправлено сразу, вечер дня 1 через 8 часов.
-    # После отправки вечера дня 1 планируем утро дня 2.
-    # Мы будем использовать фиксированное время: для дня N утро в 9:00 (N-1) дней от сегодня, вечер в 19:00 того же дня.
-    # Но т.к. мы планируем после вечера дня current_day, следующее утро – это день current_day+1.
-    # Поэтому используем дату: сегодня + (next_day - 1) дней.
-    # Но чтобы не зависеть от времени старта, мы просто планируем на конкретную дату.
-    # Используем функцию get_moscow_time_for_day с day_offset = (next_day - 1) (где 0 = сегодня, 1 = завтра и т.д.)
-    # Однако, если мы планируем утро дня 2 после вечера дня 1, а вечер дня 1 может быть в 23:00, то день 2 уже наступит через 1 час.
-    # Но мы планируем на утро 9:00 следующего календарного дня.
-    # Поэтому нужно вычислить, какая дата будет через (next_day - 1) дней от сегодня.
-
-    # Вычислим дату утра для next_day
-    # День 1 – сегодня, день 2 – завтра, день 3 – послезавтра и т.д.
-    day_offset = next_day - 1  # для дня 2 offset=1, для дня 3 offset=2
+    day_offset = next_day - 1
     morning_time = get_moscow_time_for_day(day_offset, 9, 0)
     evening_time = get_moscow_time_for_day(day_offset, 19, 0)
 
-    # Получаем текст утреннего задания
     morning_text = MORNING_TEXTS.get((track, next_day), "Утреннее задание для этого дня ещё не готово, но скоро будет 🌸")
     schedule_message(chat_id, morning_text, morning_time)
 
-    # Планируем вечернее голосовое для этого же дня
     audio_path = AUDIO_FILES[f"track{track}"][f"day{next_day}_evening"]
     schedule_voice(chat_id, audio_path, evening_time, track, next_day)
 
@@ -436,7 +406,6 @@ async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="🌺 Чек-лист уже у тебя! Скоро вернусь к тебе, а ты пока изучи чек лист и посмотри насколько откликается 💖"
         )
 
-        # Отложенные сообщения через 1 минуту и 1 час (без изменений)
         text_1min = (
             "🌸 Ну что, дорогая? Сколько пунктов совпало? 😊\n\n"
             "Если больше трёх – я очень рекомендую пройти мой бесплатный челлендж «5 дней ясности».\n"
@@ -661,13 +630,18 @@ async def process_test_result(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await asyncio.sleep(2)
 
-    # День 1: утро сразу (отправляем задание)
+    # День 1: утро сразу
     day = 1
     morning_text = MORNING_TEXTS.get((track, day), "Утреннее задание для этого дня ещё не готово, но скоро будет 🌸")
     await context.bot.send_message(chat_id=update.effective_chat.id, text=morning_text)
 
-    # Планируем вечер дня 1 через 8 часов от текущего времени (независимо от времени суток)
-    evening_time = datetime.now() + timedelta(hours=8)
+    # Определяем время вечера дня 1
+    now_moscow = datetime.now(pytz.timezone('Europe/Moscow'))
+    if now_moscow.hour < 19 or (now_moscow.hour == 19 and now_moscow.minute == 0):
+        evening_time = get_moscow_time(19, 0)
+    else:
+        evening_time = get_moscow_time(23, 59)
+
     audio_path = AUDIO_FILES[f"track{track}"][f"day{day}_evening"]
     schedule_voice(update.effective_chat.id, audio_path, evening_time, track, day)
     logger.info(f"Запланировано вечернее аудио дня 1 для {update.effective_chat.id} на {evening_time}")
@@ -675,7 +649,7 @@ async def process_test_result(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Планируем день 2: утро в 9:00 МСК, вечер в 19:00 МСК
     await schedule_next_morning(update.effective_chat.id, track, 2)
 
-# ===== Тексты утренних заданий (полные) =====
+# ===== Тексты утренних заданий =====
 MORNING_TEXTS = {
     (1,1): "☀️ День 1. Мои точки опоры\n\nСегодня мы не будем искать проблемы. Мы будем искать то, что тебя держит.\n\nЗадание:\n- Возьми лист бумаги или заметки в телефоне.\n- Напиши 5 вещей, занятий, моментов, которые возвращают тебе ощущение «я». Это может быть что угодно: утренний кофе в одиночестве, пробежка, звонок подруге, с которой можно молчать, работа над конкретной задачей, запах книги.\n- Напротив каждого пункта напиши, когда в последний раз ты это делала.\n- Выбери один пункт и встрой его в своё расписание на завтра. Прямо сейчас реши, во сколько и как.\n\nВечером я пришлю тебе голосовое сообщение. А пока дыши глубже. Ты в порядке 🌸",
     (1,2): "☀️ День 2. Границы как забота\n\nУмение говорить «нет» — это не про жесткость. Это про заботу о себе.\n\nЗадание:\n- Вспомни одну недавнюю ситуацию, где ты сказала «да», но внутри чувствовала «нет». Или где ты хотела отказаться, но не смогла.\n- Напиши, что именно ты чувствовала в тот момент: вину, страх обидеть, желание быть хорошей?\n- Теперь перепиши эту ситуацию. Напиши идеальный сценарий твоего «нет» — без оправданий, но уважительно.\n- Прочитай написанное вслух. Как ощущения?\n\nЭто упражнение — репетиция. В следующий раз мозгу будет легче 💪",
@@ -694,20 +668,74 @@ MORNING_TEXTS = {
     (3,5): "🕯️ День 5. Первый контакт с желанием\n\nТы долго обслуживала чужие сценарии. Сегодня — только ты.\n\nЗадание:\n- Подумай: что бы ты сделала сегодня, если бы никто не ждал от тебя результата? Не «что полезно», а «что приятно».\n- Выбери одно микро-действие. Очень маленькое. Без цели и смысла. Просто для удовольствия: съесть любимое пирожное, не думая о калориях; включить музыку и танцевать; купить себе цветок; лечь в кровать в 19:00 и смотреть глупый сериал.\n- Сделай это. И не объясняй никому 🌸"
 }
 
-# --- Команда для тестирования голосового сообщения ---
+# ================== ТЕСТОВЫЕ КОМАНДЫ ==================
+
+async def test_force_morning(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user = get_user(user_id)
+    if not user or not user['challenge_started']:
+        await update.message.reply_text("❌ Челлендж не начат. Нажми /start и запусти челлендж.")
+        return
+    track = user['track']
+    day = user['current_day']
+    if day == 0 or day > 5:
+        await update.message.reply_text("❌ Нет активного дня для отправки.")
+        return
+    morning_text = MORNING_TEXTS.get((track, day), "Утреннее задание не найдено.")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=morning_text)
+    await update.message.reply_text(f"✅ Утреннее задание для дня {day} отправлено принудительно.")
+
+async def test_force_evening(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user = get_user(user_id)
+    if not user or not user['challenge_started']:
+        await update.message.reply_text("❌ Челлендж не начат.")
+        return
+    track = user['track']
+    day = user['current_day']
+    if day == 0 or day > 5:
+        await update.message.reply_text("❌ Нет активного дня.")
+        return
+    audio_path = AUDIO_FILES[f"track{track}"][f"day{day}_evening"]
+    if not os.path.exists(audio_path):
+        await update.message.reply_text(f"❌ Файл не найден: {audio_path}")
+        return
+    caption = get_voice_caption(track, day)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=caption)
+    with open(audio_path, 'rb') as f:
+        await context.bot.send_voice(chat_id=update.effective_chat.id, voice=f)
+    await update.message.reply_text(f"✅ Вечернее голосовое для дня {day} отправлено принудительно.")
+    if day == 5:
+        await send_final_invitation(update.effective_chat.id)
+
+async def test_advance_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user = get_user(user_id)
+    if not user or not user['challenge_started']:
+        await update.message.reply_text("❌ Челлендж не начат.")
+        return
+    current_day = user['current_day']
+    if current_day >= 5:
+        await update.message.reply_text("❌ Челлендж уже завершён (день 5).")
+        return
+    next_day = current_day + 1
+    update_user(user_id, current_day=next_day)
+    await update.message.reply_text(f"✅ День переключён на {next_day}. Теперь можно отправить утро дня {next_day} командой /test_force_morning.")
+
+async def test_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    update_user(user_id, challenge_started=0, score=0, track=0, current_day=0, start_time=None, finished=0)
+    await update.message.reply_text("✅ Состояние сброшено. Теперь можно начать челлендж заново через /start и выбор кнопки.")
+
 async def test_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет тестовое голосовое сообщение для проверки воспроизведения."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    # Берём первый файл для теста: track1 day1
     audio_path = AUDIO_FILES["track1"]["day1_evening"]
     if not os.path.exists(audio_path):
         await update.message.reply_text("❌ Тестовый файл не найден. Проверьте путь: " + audio_path)
         return
     try:
-        # Отправляем текстовое сообщение
         await update.message.reply_text("🧪 Тестовое голосовое сообщение (трек 1, день 1)")
-        # Отправляем голосовой файл
         with open(audio_path, 'rb') as f:
             await context.bot.send_voice(chat_id=chat_id, voice=f)
         await update.message.reply_text("✅ Голосовое сообщение отправлено. Проверьте, воспроизводится ли оно на телефоне.")
@@ -742,7 +770,11 @@ async def send_final_invitation(chat_id):
 def main():
     init_db()
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("test_audio", test_audio))  # команда для теста
+    application.add_handler(CommandHandler("test_audio", test_audio))
+    application.add_handler(CommandHandler("test_force_morning", test_force_morning))
+    application.add_handler(CommandHandler("test_force_evening", test_force_evening))
+    application.add_handler(CommandHandler("test_advance_day", test_advance_day))
+    application.add_handler(CommandHandler("test_reset", test_reset))
     application.add_handler(CallbackQueryHandler(button_handler))
     logger.info("Бот запущен и ожидает сообщения...")
     application.run_polling()
