@@ -37,27 +37,28 @@ if CHECKLIST_PDF_PATH:
 else:
     logging.warning("Чек-лист не найден! Проверь, что файл checklist_spasatel.pdf загружен.")
 
+# ОБНОВЛЁННЫЕ ПУТИ с суффиксом _opus
 AUDIO_FILES = {
     "track1": {
-        "day1_evening": "files/track1_day1_evening.ogg",
-        "day2_evening": "files/track1_day2_evening.ogg",
-        "day3_evening": "files/track1_day3_evening.ogg",
-        "day4_evening": "files/track1_day4_evening.ogg",
-        "day5_evening": "files/track1_day5_evening.ogg",
+        "day1_evening": "files/track1_day1_evening_opus.ogg",
+        "day2_evening": "files/track1_day2_evening_opus.ogg",
+        "day3_evening": "files/track1_day3_evening_opus.ogg",
+        "day4_evening": "files/track1_day4_evening_opus.ogg",
+        "day5_evening": "files/track1_day5_evening_opus.ogg",
     },
     "track2": {
-        "day1_evening": "files/track2_day1_evening.ogg",
-        "day2_evening": "files/track2_day2_evening.ogg",
-        "day3_evening": "files/track2_day3_evening.ogg",
-        "day4_evening": "files/track2_day4_evening.ogg",
-        "day5_evening": "files/track2_day5_evening.ogg",
+        "day1_evening": "files/track2_day1_evening_opus.ogg",
+        "day2_evening": "files/track2_day2_evening_opus.ogg",
+        "day3_evening": "files/track2_day3_evening_opus.ogg",
+        "day4_evening": "files/track2_day4_evening_opus.ogg",
+        "day5_evening": "files/track2_day5_evening_opus.ogg",
     },
     "track3": {
-        "day1_evening": "files/track3_day1_evening.ogg",
-        "day2_evening": "files/track3_day2_evening.ogg",
-        "day3_evening": "files/track3_day3_evening.ogg",
-        "day4_evening": "files/track3_day4_evening.ogg",
-        "day5_evening": "files/track3_day5_evening.ogg",
+        "day1_evening": "files/track3_day1_evening_opus.ogg",
+        "day2_evening": "files/track3_day2_evening_opus.ogg",
+        "day3_evening": "files/track3_day3_evening_opus.ogg",
+        "day4_evening": "files/track3_day4_evening_opus.ogg",
+        "day5_evening": "files/track3_day5_evening_opus.ogg",
     }
 }
 
@@ -202,6 +203,7 @@ async def send_evening_audio(chat_id, audio_path, track, day):
         await bot.send_message(chat_id=chat_id, text=caption_text)
 
         with open(audio_path, 'rb') as f:
+            # Используем send_voice для голосовых сообщений (после перекодировки в Opus)
             await bot.send_voice(chat_id=chat_id, voice=f)
 
         logging.info(f"Голосовое сообщение успешно отправлено для {chat_id}, день {day}")
@@ -743,6 +745,24 @@ async def test_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {e}")
         logger.error(f"Ошибка тестовой отправки: {e}")
 
+async def test_audio_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        track = int(context.args[0])
+        day = int(context.args[1])
+        if track not in [1,2,3] or day not in [1,2,3,4,5]:
+            await update.message.reply_text("Использование: /test_audio_file <трек 1-3> <день 1-5>")
+            return
+        audio_path = AUDIO_FILES[f"track{track}"][f"day{day}_evening"]
+        if not os.path.exists(audio_path):
+            await update.message.reply_text(f"❌ Файл не найден: {audio_path}")
+            return
+        await update.message.reply_text(f"🧪 Тестовое голосовое (трек {track}, день {day})")
+        with open(audio_path, 'rb') as f:
+            await context.bot.send_voice(chat_id=update.effective_chat.id, voice=f)
+        await update.message.reply_text("✅ Отправлено")
+    except (IndexError, ValueError):
+        await update.message.reply_text("Использование: /test_audio_file <трек 1-3> <день 1-5>")
+
 # --- Финальное приглашение ---
 async def send_final_invitation(chat_id):
     bot = application.bot
@@ -775,6 +795,7 @@ def main():
     application.add_handler(CommandHandler("test_force_evening", test_force_evening))
     application.add_handler(CommandHandler("test_advance_day", test_advance_day))
     application.add_handler(CommandHandler("test_reset", test_reset))
+    application.add_handler(CommandHandler("test_audio_file", test_audio_file))
     application.add_handler(CallbackQueryHandler(button_handler))
     logger.info("Бот запущен и ожидает сообщения...")
     application.run_polling()
