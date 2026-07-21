@@ -263,9 +263,30 @@ def get_moscow_time_for_day(day_offset, hour, minute=0):
 async def schedule_next_morning(chat_id, track, next_day):
     if next_day > 5:
         return
-    day_offset = next_day - 1
-    morning_time = get_moscow_time_for_day(day_offset, 9, 0)
-    evening_time = get_moscow_time_for_day(day_offset, 19, 0)
+
+    user = get_user(chat_id)
+    if not user or not user.get('start_time'):
+        logging.error(f"Не найден start_time для пользователя {chat_id}, планирование невозможно")
+        # Запасной вариант: использовать текущее время как старт
+        start_time = datetime.now(pytz.timezone('Europe/Moscow'))
+    else:
+        start_time = user['start_time']
+        if isinstance(start_time, str):
+            start_time = datetime.fromisoformat(start_time)
+        if start_time.tzinfo is None:
+            start_time = pytz.timezone('Europe/Moscow').localize(start_time)
+
+    # Базовая дата для дня next_day: start_time + (next_day - 1) дней
+    base_day = start_time + timedelta(days=(next_day - 1))
+    # Устанавливаем время утра и вечера
+    morning_time = base_day.replace(hour=9, minute=0, second=0, microsecond=0)
+    evening_time = base_day.replace(hour=19, minute=0, second=0, microsecond=0)
+
+    # Если рассчитанное время уже прошло (например, бот перезапустился), переносим на следующий день
+    now_moscow = datetime.now(pytz.timezone('Europe/Moscow'))
+    if morning_time < now_moscow:
+        morning_time += timedelta(days=1)
+        evening_time += timedelta(days=1)
 
     morning_text = MORNING_TEXTS.get((track, next_day), "Утреннее задание для этого дня ещё не готово, но скоро будет 🌸")
     schedule_message(chat_id, morning_text, morning_time)
