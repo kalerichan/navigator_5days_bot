@@ -403,7 +403,7 @@ async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    file_path = find_file("checklist_spasatel.pdf")
+    file_path = find_file("checklist_net.pdf")
     if not file_path:
         await context.bot.send_message(
             chat_id=chat_id,
