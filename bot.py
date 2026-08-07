@@ -35,9 +35,8 @@ CHECKLIST_PDF_PATH = find_file("checklist_net.pdf")
 if CHECKLIST_PDF_PATH:
     logging.info(f"Чек-лист найден: {CHECKLIST_PDF_PATH}")
 else:
-    logging.warning("Чек-лист не найден! Проверь, что файл checklist_spasatel.pdf загружен.")
+    logging.warning("Чек-лист не найден! Проверь, что файл checklist_net.pdf загружен.")
 
-# ОБНОВЛЁННЫЕ ПУТИ с суффиксом _opus
 AUDIO_FILES = {
     "track1": {
         "day1_evening": "files/track1_day1_evening_opus.ogg",
@@ -203,7 +202,6 @@ async def send_evening_audio(chat_id, audio_path, track, day):
         await bot.send_message(chat_id=chat_id, text=caption_text)
 
         with open(audio_path, 'rb') as f:
-            # Используем send_voice для голосовых сообщений (после перекодировки в Opus)
             await bot.send_voice(chat_id=chat_id, voice=f)
 
         logging.info(f"Голосовое сообщение успешно отправлено для {chat_id}, день {day}")
@@ -267,7 +265,6 @@ async def schedule_next_morning(chat_id, track, next_day):
     user = get_user(chat_id)
     if not user or not user.get('start_time'):
         logging.error(f"Не найден start_time для пользователя {chat_id}, планирование невозможно")
-        # Запасной вариант: использовать текущее время как старт
         start_time = datetime.now(pytz.timezone('Europe/Moscow'))
     else:
         start_time = user['start_time']
@@ -276,13 +273,10 @@ async def schedule_next_morning(chat_id, track, next_day):
         if start_time.tzinfo is None:
             start_time = pytz.timezone('Europe/Moscow').localize(start_time)
 
-    # Базовая дата для дня next_day: start_time + (next_day - 1) дней
     base_day = start_time + timedelta(days=(next_day - 1))
-    # Устанавливаем время утра и вечера
     morning_time = base_day.replace(hour=9, minute=0, second=0, microsecond=0)
     evening_time = base_day.replace(hour=19, minute=0, second=0, microsecond=0)
 
-    # Если рассчитанное время уже прошло (например, бот перезапустился), переносим на следующий день
     now_moscow = datetime.now(pytz.timezone('Europe/Moscow'))
     if morning_time < now_moscow:
         morning_time += timedelta(days=1)
@@ -316,7 +310,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Меня зовут Лера, я твой личный навигатор и автор канала о том, как перестать жить для других и начать выбирать себя 💖\n\n"
             "Я создала этот бот, чтобы помочь тебе заметить, где ты теряешь себя в ролях «удобной», «спасательницы» и «отличницы».\n\n"
             "Здесь ты сможешь:\n"
-            "📋 Получить чек-лист «10 признаков Спасателя» — чтобы увидеть свои паттерны.\n"
+            "📋 Получить чек-лист «Как отказать без чувства вины» — чтобы научиться говорить «нет» без угрызений совести.\n"
             "🗓 Пройти бесплатный 5-дневный челлендж «5 дней ясности» — с заданиями и голосовыми разборами.\n"
             "💬 Написать мне лично, если захочешь разобрать свою ситуацию глубже.\n\n"
             "Чтобы получить доступ ко всем материалам, подпишись на мой канал — там я делюсь инсайтами и анонсами. Это бесплатно и займёт 5 секунд 🌹\n\n"
@@ -330,23 +324,101 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
         return
 
-    keyboard = [
-        [InlineKeyboardButton("📋 Чек-лист «Спасатель»", callback_data="checklist")],
-        [InlineKeyboardButton("🗓 Челлендж «5 дней»", callback_data="challenge")],
-        [InlineKeyboardButton("💬 Написать мне", url=DIAGNOSTIC_LINK)]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "🌸 Привет, дорогая! Рада видеть тебя снова! 💖\n\n"
-        "Ты уже подписана на мой канал, и я благодарна тебе за это. Теперь все материалы открыты для тебя.\n\n"
-        "Здесь ты можешь:\n"
-        "📋 Получить чек-лист «10 признаков Спасателя» — чтобы увидеть свои паттерны.\n"
-        "🗓 Пройти бесплатный 5-дневный челлендж «5 дней ясности» — с заданиями и голосовыми разборами.\n"
-        "💬 Написать мне лично, если захочешь разобрать свою ситуацию глубже.\n\n"
-        "Выбери, что хочешь получить сегодня:",
-        reply_markup=reply_markup
+    # Если уже подписана — сразу чек-лист
+    await send_checklist(update, context)
+
+# ================== ЧЕК-ЛИСТ ==================
+async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    file_path = find_file("checklist_net.pdf")
+    if not file_path:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Ой, файл с чек-листом не найден... Я уже проверяю, что случилось. Попробуй чуть позже, хорошо? 🌸\n\n"
+                 "💡 Если ты загружала файл в папку `files`, перезагрузи бота, и всё заработает!"
+        )
+        logger.error(f"Файл checklist_net.pdf не найден! Текущая директория: {os.getcwd()}, файлы: {os.listdir('.')}")
+        return
+
+    try:
+        with open(file_path, 'rb') as f:
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=f,
+                filename="checklist_net.pdf",
+                caption="📋 Держи обещанный чек-лист «Как отказать без чувства вины» 👇\n\nПосмотри внимательно – там много неожиданных открытий 🌸"
+            )
+        now = datetime.now()
+        update_user(user_id, checklist_sent_time=now)
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="🌺 Чек-лист уже у тебя! А теперь расскажу тебе про обновлённый челлендж 💖"
+        )
+
+        await asyncio.sleep(1)
+        await show_version_choice(update, context)
+
+    except Exception as e:
+        logger.error(f"Ошибка отправки чек-листа: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Что-то пошло не так при отправке файла. Попробуй ещё раз или напиши мне @valeriasereda, я помогу 🌸"
+        )
+
+# ================== ВЫБОР ВЕРСИИ ЧЕЛЛЕНДЖА ==================
+async def show_version_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает выбор версии челленджа."""
+    chat_id = update.effective_chat.id
+
+    text = (
+        "🌸 У меня вышло обновление — **Челлендж 2.0**! Теперь он **платный** (700₽).\n\n"
+        "✨ **Что поменялось?**\n\n"
+        "| Бесплатная версия (было) | Платная версия 2.0 (за 700₽) |\n"
+        "|---|---|\n"
+        "| 5 утренних заданий | 5 утренних заданий (те же) |\n"
+        "| 5 вечерних голосовых | 5 вечерних голосовых (те же) |\n"
+        "| Тест и подбор трека | Тест и подбор трека |\n"
+        "| ❌ Не было | ✅ Рабочая тетрадь в PDF (1 файл на все 5 дней) |\n"
+        "| ❌ Не было | ✅ 1 бонусное голосовое на 6-й день |\n"
+        "| ❌ Не было | ✅ Закрытый чат с участницами твоего потока |\n"
+        "| ❌ Не было | ✅ Персональная аудио-рефлексия от меня на 7-й день |\n\n"
+        "Я создала это специально для того, чтобы дать больше пользы, но это потребовало и большего ресурса. "
+        "Я не хочу забирать бесплатную возможность, но также готова дать больше.\n\n"
+        "**Какую версию челленджа ты хочешь пройти?**"
     )
 
+    keyboard = [
+        [InlineKeyboardButton("🎁 Продолжить бесплатно", callback_data="start_free_challenge")],
+        [InlineKeyboardButton("💎 Приобрести доступ к новой версии", callback_data="buy_paid_version")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+
+# ================== ОБРАБОТЧИКИ КНОПОК ==================
+async def start_free_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запускает бесплатную версию челленджа."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🌸 Отлично! Запускаем бесплатную версию челленджа. Давай начнём с теста! 💖")
+    await asyncio.sleep(1)
+    await handle_challenge_start(update, context)
+
+async def buy_paid_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет информацию о покупке платной версии."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "💎 Ссылка на оплату пока не добавлена. Свяжитесь с @valeriasereda для получения доступа к платной версии."
+    )
+
+# ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -357,16 +429,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subscribed = await is_subscribed(context.bot, user_id)
         logger.info(f"Проверка подписки для {user_id}: {subscribed}")
         if subscribed:
-            keyboard = [
-                [InlineKeyboardButton("📋 Чек-лист «Спасатель»", callback_data="checklist")],
-                [InlineKeyboardButton("🗓 Челлендж «5 дней»", callback_data="challenge")],
-                [InlineKeyboardButton("💬 Написать мне", url=DIAGNOSTIC_LINK)]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                "🌺 Супер! Подписка подтверждена! Теперь все материалы твои 🌸\n\nВыбери, что хочешь получить:",
-                reply_markup=reply_markup
+                "🌺 Супер! Подписка подтверждена! Теперь все материалы твои 🌸"
             )
+            await send_checklist(update, context)
         else:
             keyboard = [
                 [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")],
@@ -390,87 +456,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "checklist":
         await send_checklist(update, context)
     elif data == "challenge":
-        await handle_challenge_start(update, context)
+        await show_version_choice(update, context)
+    elif data == "start_free_challenge":
+        await start_free_challenge(update, context)
+    elif data == "buy_paid_version":
+        await buy_paid_version(update, context)
     elif data == "start_challenge_from_checklist":
-        await handle_challenge_start(update, context)
+        await show_version_choice(update, context)
     elif data.startswith("test_"):
         await handle_test_answer(update, context)
     else:
         await query.edit_message_text("Неизвестная команда 🤔")
 
-# --- Чек-лист ---
-async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-
-    file_path = find_file("checklist_net.pdf")
-    if not file_path:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="❌ Ой, файл с чек-листом не найден... Я уже проверяю, что случилось. Попробуй чуть позже, хорошо? 🌸\n\n"
-                 "💡 Если ты загружала файл в папку `files`, перезагрузи бота, и всё заработает!"
-        )
-        logger.error(f"Файл checklist_spasatel.pdf не найден! Текущая директория: {os.getcwd()}, файлы: {os.listdir('.')}")
-        return
-
-    try:
-        with open(file_path, 'rb') as f:
-            await context.bot.send_document(
-                chat_id=chat_id,
-                document=f,
-                filename="checklist_spasatel.pdf",
-                caption="📋 Держи обещанный чек-лист «10 неочевидных признаков, что ты играешь роль Спасателя» 👇\n\nПосмотри внимательно – там много неожиданных открытий 🌸"
-            )
-        now = datetime.now()
-        update_user(user_id, checklist_sent_time=now)
-
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="🌺 Чек-лист уже у тебя! Скоро вернусь к тебе, а ты пока изучи чек лист и посмотри насколько откликается 💖"
-        )
-
-        text_1min = (
-            "🌸 Ну что, дорогая? Сколько пунктов совпало? 😊\n\n"
-            "Если больше трёх – я очень рекомендую пройти мой бесплатный челлендж «5 дней ясности».\n"
-            "Это очень интересно и познавательно, честно! Мы шаг за шагом выходим из роли Спасателя и начинаем жить для себя 💖\n\n"
-            "Хочешь попробовать?"
-        )
-        keyboard = [[InlineKeyboardButton("🗓 Начать челлендж", callback_data="start_challenge_from_checklist")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        run_date = datetime.now() + timedelta(minutes=1)
-        schedule_message(chat_id, text_1min, run_date, reply_markup)
-
-        text_1hour = (
-            "🌷 Милая, я вижу, что ты пока не решилась…\n\n"
-            "Знаешь, мне очень грустно смотреть на ситуации, когда собственная жизнь откладывается на потом.\n"
-            "А ведь всего 10–15 минут в день в течение 5 дней – и ты почувствуешь такие перемены, что сама удивишься! ✨\n\n"
-            "Ты достойна этого времени для себя. Давай попробуем? 💗"
-        )
-        run_date_1hour = datetime.now() + timedelta(hours=1)
-        schedule_message(chat_id, text_1hour, run_date_1hour, reply_markup)
-
-    except Exception as e:
-        logger.error(f"Ошибка отправки чек-листа: {e}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="❌ Что-то пошло не так при отправке файла. Попробуй ещё раз или напиши мне @valeriasereda, я помогу 🌸"
-        )
-
-# --- Вступительное сообщение перед тестом ---
-async def send_challenge_intro(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    intro_text = (
-        "🌸 Я рада, что ты решила пройти челлендж «5 дней ясности»!\n\n"
-        "Прежде чем мы начнём, я предлагаю тебе пройти небольшой тест «Индекс потери себя». Он поможет понять, на каком ты сейчас этапе и какой трек подойдёт тебе лучше всего.\n\n"
-        "Тест состоит из 6 вопросов – отвечай честно, здесь нет правильных или неправильных ответов. Только твоя правда.\n\n"
-        "После теста я подберу для тебя индивидуальный трек, и мы начнём челлендж. Готова? 💖"
-    )
-    await context.bot.send_message(chat_id=chat_id, text=intro_text)
-    await asyncio.sleep(2)
-    context.user_data['last_feedback_id'] = None
-    await send_question(update, context, question_index=0)
-
-# --- Запуск челленджа ---
+# ================== ЗАПУСК ЧЕЛЛЕНДЖА ==================
 async def handle_challenge_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = update.effective_user.id
@@ -503,7 +501,21 @@ async def handle_challenge_start(update: Update, context: ContextTypes.DEFAULT_T
     update_user(user_id, challenge_started=1, score=0, track=0, current_day=0, start_time=datetime.now(), finished=0)
     await send_challenge_intro(update, context)
 
-# --- Вопросы теста ---
+# ================== ТЕСТ (вопросы) ==================
+async def send_challenge_intro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    intro_text = (
+        "🌸 Я рада, что ты решила пройти челлендж «5 дней ясности»!\n\n"
+        "Прежде чем мы начнём, я предлагаю тебе пройти небольшой тест «Индекс потери себя». Он поможет понять, на каком ты сейчас этапе и какой трек подойдёт тебе лучше всего.\n\n"
+        "Тест состоит из 6 вопросов – отвечай честно, здесь нет правильных или неправильных ответов. Только твоя правда.\n\n"
+        "После теста я подберу для тебя индивидуальный трек, и мы начнём челлендж. Готова? 💖"
+    )
+    await context.bot.send_message(chat_id=chat_id, text=intro_text)
+    await asyncio.sleep(2)
+    context.user_data['last_feedback_id'] = None
+    await send_question(update, context, question_index=0)
+
+# ================== ВОПРОСЫ ТЕСТА ==================
 questions = [
     {
         "text": "Когда в последний раз ты делала что-то только для себя, без оглядки на других?",
@@ -625,201 +637,4 @@ async def process_test_result(update: Update, context: ContextTypes.DEFAULT_TYPE
         track = 1
         track_desc = (
             "🌿 Ты в контакте с собой\n"
-            "Ты умеешь слышать свои желания и ставить границы. Мой челлендж поможет тебе укрепить эту опору и не скатиться обратно в роль «удобной»."
-        )
-    elif 10 <= score <= 14:
-        track = 2
-        track_desc = (
-            "⚖️ Ты на грани потери\n"
-            "Ты ещё помнишь себя настоящую, но всё чаще выбираешь «надо» вместо «хочу». Твоё тело уже подаёт сигналы. Пора остановиться и посмотреть, куда утекает твоя энергия."
-        )
-    else:
-        track = 3
-        track_desc = (
-            "🕯️ Ты забыла о себе\n"
-            "Ты живёшь в режиме функции. Достижения не радуют, а внутри — пустота и усталость. Хорошая новость: ты не сломалась, ты просто слишком долго обслуживала чужие сценарии. Челлендж станет твоим первым шагом обратно к себе."
-        )
-
-    update_user(user_id, track=track, current_day=1, start_time=datetime.now())
-
-    result_text = f"🌸 Твой результат: {score} баллов.\n\n{track_desc}\n\nТеперь начинаем челлендж! Сегодня – день 1. Готова? 💖"
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=result_text)
-    await asyncio.sleep(2)
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="💡 Важный совет: закрепи этот чат в Telegram (зажми на пару секунд название чата и выбери «Закрепить»), чтобы не потерять его в течение 5 дней челленджа. Я буду присылать тебе задания и голосовые сообщения каждый день, и они не затеряются 🌸"
-    )
-
-    await asyncio.sleep(2)
-
-    # День 1: утро сразу
-    day = 1
-    morning_text = MORNING_TEXTS.get((track, day), "Утреннее задание для этого дня ещё не готово, но скоро будет 🌸")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=morning_text)
-
-    # Определяем время вечера дня 1
-    now_moscow = datetime.now(pytz.timezone('Europe/Moscow'))
-    if now_moscow.hour < 19 or (now_moscow.hour == 19 and now_moscow.minute == 0):
-        evening_time = get_moscow_time(19, 0)
-    else:
-        evening_time = get_moscow_time(23, 59)
-
-    audio_path = AUDIO_FILES[f"track{track}"][f"day{day}_evening"]
-    schedule_voice(update.effective_chat.id, audio_path, evening_time, track, day)
-    logger.info(f"Запланировано вечернее аудио дня 1 для {update.effective_chat.id} на {evening_time}")
-
-    # Планируем день 2: утро в 9:00 МСК, вечер в 19:00 МСК
-    await schedule_next_morning(update.effective_chat.id, track, 2)
-
-# ===== Тексты утренних заданий =====
-MORNING_TEXTS = {
-    (1,1): "☀️ День 1. Мои точки опоры\n\nСегодня мы не будем искать проблемы. Мы будем искать то, что тебя держит.\n\nЗадание:\n- Возьми лист бумаги или заметки в телефоне.\n- Напиши 5 вещей, занятий, моментов, которые возвращают тебе ощущение «я». Это может быть что угодно: утренний кофе в одиночестве, пробежка, звонок подруге, с которой можно молчать, работа над конкретной задачей, запах книги.\n- Напротив каждого пункта напиши, когда в последний раз ты это делала.\n- Выбери один пункт и встрой его в своё расписание на завтра. Прямо сейчас реши, во сколько и как.\n\nВечером я пришлю тебе голосовое сообщение. А пока дыши глубже. Ты в порядке 🌸",
-    (1,2): "☀️ День 2. Границы как забота\n\nУмение говорить «нет» — это не про жесткость. Это про заботу о себе.\n\nЗадание:\n- Вспомни одну недавнюю ситуацию, где ты сказала «да», но внутри чувствовала «нет». Или где ты хотела отказаться, но не смогла.\n- Напиши, что именно ты чувствовала в тот момент: вину, страх обидеть, желание быть хорошей?\n- Теперь перепиши эту ситуацию. Напиши идеальный сценарий твоего «нет» — без оправданий, но уважительно.\n- Прочитай написанное вслух. Как ощущения?\n\nЭто упражнение — репетиция. В следующий раз мозгу будет легче 💪",
-    (1,3): "☀️ День 3. Тело как союзник\n\nТело — не инструмент для достижений. Оно — твой дом.\n\nЗадание:\n- Сядь удобно, закрой глаза. Сделай три глубоких вдоха.\n- Пройди вниманием от макушки до пальцев ног. Где сейчас живёт тепло, лёгкость, а где — напряжение, тяжесть?\n- Открой глаза и запиши:\n    - Точка напряжения: где она? На что похожа?\n    - Точка ресурса: где в теле тебе сейчас хорошо, спокойно?\n- Задай вопрос точке напряжения: «Что ты хочешь мне сказать?». Запиши первую пришедшую мысль, даже если она кажется странной.\n\nТвоё тело всегда на твоей стороне. Учись его слышать 🌷",
-    (1,4): "☀️ День 4. Спасатель vs Поддержка\n\nПомогать можно по-разному: из любви или из страха быть ненужной.\n\nЗадание:\n- Вспомни одну ситуацию за последние дни, где ты кому-то помогла.\n- Ответь честно:\n    - Кому принадлежала проблема изначально?\n    - Тебя просили о помощи или ты предложила сама?\n    - Что ты чувствовала в процессе: энергию и тепло или усталость и раздражение?\n    - Если бы ты не помогла, что бы случилось с тобой? (Стыд? Вина? Страх, что тебя разлюбят?)\n- Если помощь больше напоминала спасение — просто заметь это. Не ругай себя. Ты это увидела, а значит — уже начала выходить из роли 💗",
-    (1,5): "☀️ День 5. Мой следующий шаг\n\nТы умеешь слышать себя. Теперь — усилить.\n\nЗадание:\n- Посмотри на записи за эти дни. Что стало самым важным открытием?\n- Напиши одно действие, которое расширит твою «зону авторства» в ближайшую неделю. Это может быть: сказать честно о своей усталости, отказаться от задачи, которую ты обычно берёшь «потому что надо», выделить час в день только для себя и никому не отчитываться.\n- Запиши это действие в календарь. Сделай его неотменяемым 🌸",
-    (2,1): "☀️ День 1. Детектор утечки энергии\n\nТы устаёшь не от дел. Ты устаёшь от ролей, которые не твои.\n\nЗадание:\n- Нарисуй таблицу из 4 столбцов:\n    - Роль (сотрудница, жена, дочь, подруга, перфекционистка…)\n    - Энергия ЗАБИРАЕТ (1–10)\n    - Энергия ПРИНОСИТ (1–10)\n    - Разница (Приносит – Забирает)\n- Заполни. Будь честна. Роль «хорошая мать» может забирать 8, а приносить 3 — и это нормально заметить.\n- Посмотри на роли с отрицательной разницей. Выбери одну, которая истощает тебя сильнее всего. Завтра мы продолжим.\n\nТы не плохая. Ты просто слишком долго раздаёшь то, что не восполняется 🌷",
-    (2,2): "☀️ День 2. Чей это голос?\n\nМногие цели — не наши. Мы просто взяли их напрокат у родителей, начальников, общества.\n\nЗадание:\n- Выпиши 3 главные цели на этот год (карьера, деньги, статус).\n- Для каждой ответь:\n    - Кто первым сказал, что это важно? (Мама? Партнёр? Коллеги?)\n    - Если бы НИКТО никогда не узнал о моём результате, мне всё ещё было бы это важно?\n    - Какой процент этого желания — попытка доказать что-то другим? (0–100%)\n- Посмотри на проценты. Если больше 60% — скорее всего, цель не твоя. Если ответ «нет» — цель точно навязана.\n\nЭто может быть больно. Но это правда, которая освобождает. Я тоже через это прошла 💖",
-    (2,3): "☀️ День 3. Тело не врёт\n\nПока голова думает, что всё нормально, тело уже кричит.\n\nЗадание:\n- Сядь тихо. Закрой глаза. Спроси: «Где сейчас живёт моя усталость?»\n- Запиши все сигналы тела за последний месяц: напряжение в шее/плечах, ком в горле, бессонница, головные боли, проблемы с желудком.\n- Рядом с каждым сигналом напиши: «Что я делала в момент, когда это появилось? Что я чувствовала, но не выразила?»\n\nТвоё тело — твой главный свидетель. Оно не врёт. Верни ему право голоса 🌸",
-    (2,4): "☀️ День 4. Маска спасателя\n\nСпасательство — это часто не доброта, а способ контролировать и чувствовать себя нужной.\n\nЗадание:\n- Вспомни одну конкретную ситуацию за последнюю неделю, где ты кого-то «спасала» (решала чужую проблему, брала на себя чужую ответственность).\n- Нарисуй треугольник и поставь себя в одну из ролей: Жертва, Спасатель, Преследователь.\n- Ответь:\n    - Что я чувствовала ДО того, как начала спасать?\n    - Что я чувствовала В ПРОЦЕССЕ?\n    - Что я получила в итоге? (Благодарность? Ощущение контроля? Пустоту?)\n- Что будет, если в следующий раз ты не войдёшь в эту роль? Страх, который возникнет — это и есть твой ключ к выходу 💗",
-    (2,5): "☀️ День 5. Один шаг к себе\n\nОсознание — это половина. Теперь — действие.\n\nЗадание:\n- Вернись к Дню 1. Посмотри на роль, которая истощает тебя сильнее всего.\n- Как ты можешь «сыграть» её на 30% меньше?\n    - Не отвечать на рабочие сообщения после 20:00.\n    - Не быть жилеткой для подруги, если у самой нет сил.\n    - Сказать домашним: «Сегодня я готовлю только для себя».\n- Выбери одно маленькое действие и сделай его в ближайшие 48 часов 🌺",
-    (3,1): "🕯️ День 1. Стоп-кран\n\nНикаких планов, никаких «надо». Сегодня мы просто останавливаемся.\n\nЗадание:\n- Найди 15 минут тишины. Без телефона, без людей, без задач.\n- Сядь или ляг удобно. Положи руку на грудь.\n- Задай себе вопрос: «Что я сейчас чувствую на самом деле?»\n    - Не «что я должна чувствовать».\n    - Не «что от меня ждут».\n    - А просто — что внутри. Пустота? Грусть? Облегчение? Злость?\n- Запиши первое, что пришло. Даже если это «ничего». Это тоже ответ.\n\nСегодня не надо ничего решать. Просто разреши себе быть 🌸",
-    (3,2): "🕯️ День 2. Моё тело говорит\n\nКогда ты забыла о себе, тело помнит всё.\n\nЗадание:\n- В течение дня делай паузы. Каждые 2–3 часа спрашивай: «Что сейчас чувствует моё тело?»\n- Запиши 3–5 сигналов, которые повторяются: усталость, боль, напряжение, пустота в груди.\n- Вечером возьми записи и допиши рядом с каждым сигналом: «Это может говорить о том, что я…»\n\nНичего не исправляй. Просто признай: твоё тело говорило с тобой всё это время 💖",
-    (3,3): "🕯️ День 3. Чужие сценарии\n\nНекоторые правила мы выучили так давно, что считаем их своими.\n\nЗадание:\n- Вспомни фразы, которые ты часто слышала в детстве. От родителей, учителей, значимых взрослых. Например: «Ты должна быть сильной», «Не плачь, это стыдно», «Что люди подумают?», «Ты же девочка, будь удобной».\n- Выпиши 5 таких фраз.\n- Рядом с каждой напиши: «Так было тогда. Но сейчас я взрослая. И я могу…» и закончи по-новому.\n\nЭто не предательство. Это взросление 🌷",
-    (3,4): "🕯️ День 4. Я имею право\n\nСегодня мы будем возвращать себе то, что у тебя когда-то отобрали.\n\nЗадание:\n- Напиши список из 10–15 пунктов, который начинается словами «Я имею право…». Например:\n    - Я имею право уставать.\n    - Я имею право просить о помощи.\n    - Я имею право злиться.\n    - Я имею право не справляться.\n    - Я имею право быть неудобной.\n    - Я имею право на отдых без чувства вины.\n- Прочитай список вслух. Медленно. Пункт за пунктом.\n- Выбери один пункт, который труднее всего принять. Напиши его на листочке и повесь на видное место.\n\nЭто не бунт. Это возвращение к себе 💗",
-    (3,5): "🕯️ День 5. Первый контакт с желанием\n\nТы долго обслуживала чужие сценарии. Сегодня — только ты.\n\nЗадание:\n- Подумай: что бы ты сделала сегодня, если бы никто не ждал от тебя результата? Не «что полезно», а «что приятно».\n- Выбери одно микро-действие. Очень маленькое. Без цели и смысла. Просто для удовольствия: съесть любимое пирожное, не думая о калориях; включить музыку и танцевать; купить себе цветок; лечь в кровать в 19:00 и смотреть глупый сериал.\n- Сделай это. И не объясняй никому 🌸"
-}
-
-# ================== ТЕСТОВЫЕ КОМАНДЫ ==================
-
-async def test_force_morning(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-    if not user or not user['challenge_started']:
-        await update.message.reply_text("❌ Челлендж не начат. Нажми /start и запусти челлендж.")
-        return
-    track = user['track']
-    day = user['current_day']
-    if day == 0 or day > 5:
-        await update.message.reply_text("❌ Нет активного дня для отправки.")
-        return
-    morning_text = MORNING_TEXTS.get((track, day), "Утреннее задание не найдено.")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=morning_text)
-    await update.message.reply_text(f"✅ Утреннее задание для дня {day} отправлено принудительно.")
-
-async def test_force_evening(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-    if not user or not user['challenge_started']:
-        await update.message.reply_text("❌ Челлендж не начат.")
-        return
-    track = user['track']
-    day = user['current_day']
-    if day == 0 or day > 5:
-        await update.message.reply_text("❌ Нет активного дня.")
-        return
-    audio_path = AUDIO_FILES[f"track{track}"][f"day{day}_evening"]
-    if not os.path.exists(audio_path):
-        await update.message.reply_text(f"❌ Файл не найден: {audio_path}")
-        return
-    caption = get_voice_caption(track, day)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=caption)
-    with open(audio_path, 'rb') as f:
-        await context.bot.send_voice(chat_id=update.effective_chat.id, voice=f)
-    await update.message.reply_text(f"✅ Вечернее голосовое для дня {day} отправлено принудительно.")
-    if day == 5:
-        await send_final_invitation(update.effective_chat.id)
-
-async def test_advance_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-    if not user or not user['challenge_started']:
-        await update.message.reply_text("❌ Челлендж не начат.")
-        return
-    current_day = user['current_day']
-    if current_day >= 5:
-        await update.message.reply_text("❌ Челлендж уже завершён (день 5).")
-        return
-    next_day = current_day + 1
-    update_user(user_id, current_day=next_day)
-    await update.message.reply_text(f"✅ День переключён на {next_day}. Теперь можно отправить утро дня {next_day} командой /test_force_morning.")
-
-async def test_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    update_user(user_id, challenge_started=0, score=0, track=0, current_day=0, start_time=None, finished=0)
-    await update.message.reply_text("✅ Состояние сброшено. Теперь можно начать челлендж заново через /start и выбор кнопки.")
-
-async def test_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    audio_path = AUDIO_FILES["track1"]["day1_evening"]
-    if not os.path.exists(audio_path):
-        await update.message.reply_text("❌ Тестовый файл не найден. Проверьте путь: " + audio_path)
-        return
-    try:
-        await update.message.reply_text("🧪 Тестовое голосовое сообщение (трек 1, день 1)")
-        with open(audio_path, 'rb') as f:
-            await context.bot.send_voice(chat_id=chat_id, voice=f)
-        await update.message.reply_text("✅ Голосовое сообщение отправлено. Проверьте, воспроизводится ли оно на телефоне.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
-        logger.error(f"Ошибка тестовой отправки: {e}")
-
-async def test_audio_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        track = int(context.args[0])
-        day = int(context.args[1])
-        if track not in [1,2,3] or day not in [1,2,3,4,5]:
-            await update.message.reply_text("Использование: /test_audio_file <трек 1-3> <день 1-5>")
-            return
-        audio_path = AUDIO_FILES[f"track{track}"][f"day{day}_evening"]
-        if not os.path.exists(audio_path):
-            await update.message.reply_text(f"❌ Файл не найден: {audio_path}")
-            return
-        await update.message.reply_text(f"🧪 Тестовое голосовое (трек {track}, день {day})")
-        with open(audio_path, 'rb') as f:
-            await context.bot.send_voice(chat_id=update.effective_chat.id, voice=f)
-        await update.message.reply_text("✅ Отправлено")
-    except (IndexError, ValueError):
-        await update.message.reply_text("Использование: /test_audio_file <трек 1-3> <день 1-5>")
-
-# --- Финальное приглашение ---
-async def send_final_invitation(chat_id):
-    bot = application.bot
-    if not await is_subscribed(bot, chat_id):
-        keyboard = [[InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await bot.send_message(
-            chat_id=chat_id,
-            text="❌ Ой, кажется, ты отписалась от канала. Чтобы получить финальное приглашение, подпишись снова 💔",
-            reply_markup=reply_markup
-        )
-        return
-
-    text = (
-        "🌟 Ты прошла челлендж «5 дней ясности»! Это огромный шаг – я горжусь тобой 💖\n\n"
-        "Если ты чувствуешь, что хочешь разобрать именно твою ситуацию лично – приглашаю на сессию «Разворот».\n"
-        "За 1,5 часа мы составим твой индивидуальный маршрут.\n\n"
-        "Напиши мне слово «РАЗВОРОТ» и узнай детали. Это бесплатно и ни к чему тебя не обязывает 🌸"
-    )
-    keyboard = [[InlineKeyboardButton("💬 Написать Лере", url=DIAGNOSTIC_LINK)]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
-
-# ================== ЗАПУСК ==================
-def main():
-    init_db()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("test_audio", test_audio))
-    application.add_handler(CommandHandler("test_force_morning", test_force_morning))
-    application.add_handler(CommandHandler("test_force_evening", test_force_evening))
-    application.add_handler(CommandHandler("test_advance_day", test_advance_day))
-    application.add_handler(CommandHandler("test_reset", test_reset))
-    application.add_handler(CommandHandler("test_audio_file", test_audio_file))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    logger.info("Бот запущен и ожидает сообщения...")
-    application.run_polling()
-
-if __name__ == "__main__":
-    main()
+            "Ты умеешь слышать свои желания и ставить границы. Мой челлендж поможет тебе укрепить эту опору и не скатиться обратно в роль
