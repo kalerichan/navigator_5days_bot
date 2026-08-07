@@ -31,7 +31,7 @@ def find_file(filename):
             return path
     return None
 
-CHECKLIST_PDF_PATH = find_file("checklist_spasatel.pdf")
+CHECKLIST_PDF_PATH = find_file("checklist_net.pdf")
 if CHECKLIST_PDF_PATH:
     logging.info(f"Чек-лист найден: {CHECKLIST_PDF_PATH}")
 else:
