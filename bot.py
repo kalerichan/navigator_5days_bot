@@ -2,25 +2,12 @@ import logging
 import asyncio
 import sqlite3
 import os
-import uuid
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
-from config import (
-    BOT_TOKEN, ADMIN_ID, CHANNEL_ID, DIAGNOSTIC_LINK,
-    YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, YOOKASSA_TEST_MODE
-)
-
-# Импортируем YooKassa
-from yookassa import Configuration, Payment
-from yookassa.domain.models.currency import Currency
-from yookassa.domain.common.confirmation_type import ConfirmationType
-
-# Настройка YooKassa
-Configuration.account_id = YOOKASSA_SHOP_ID
-Configuration.secret_key = YOOKASSA_SECRET_KEY
+from config import BOT_TOKEN, ADMIN_ID, CHANNEL_ID, DIAGNOSTIC_LINK
 
 # ================== ЛОГИРОВАНИЕ ==================
 logging.basicConfig(level=logging.INFO)
@@ -78,15 +65,6 @@ def init_db():
             score INTEGER DEFAULT 0
         )
     ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS payments (
-            payment_id TEXT PRIMARY KEY,
-            user_id INTEGER,
-            amount INTEGER,
-            status TEXT,
-            created_at DATETIME
-        )
-    ''')
     conn.commit()
     conn.close()
 
@@ -127,21 +105,6 @@ def update_user(user_id, **kwargs):
     c = conn.cursor()
     for key, value in kwargs.items():
         c.execute(f'UPDATE users SET {key} = ? WHERE user_id = ?', (value, user_id))
-    conn.commit()
-    conn.close()
-
-def save_payment(payment_id, user_id, amount, status='pending'):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute('INSERT INTO payments (payment_id, user_id, amount, status, created_at) VALUES (?, ?, ?, ?, ?)',
-              (payment_id, user_id, amount, status, datetime.now()))
-    conn.commit()
-    conn.close()
-
-def update_payment_status(payment_id, status):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute('UPDATE payments SET status = ? WHERE payment_id = ?', (status, payment_id))
     conn.commit()
     conn.close()
 
@@ -186,57 +149,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         create_user(user_id, username)
         user = get_user(user_id)
 
-    if user and user['paid']:
-        await show_main_menu(update, context)
-        return
-
-    # Проверяем подписку на канал
-    if not await is_subscribed(context.bot, user_id):
-        await show_subscription_required(update, context)
-        return
-
-    await show_payment_options(update, context)
-
-async def show_subscription_required(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🌸 Привет, дорогая!\n\n"
-        "Для доступа к платному челленджу **«5 дней ясности 2.0»** необходимо подписаться на мой канал.\n\n"
-        "👇 Нажми «Подписаться», а затем «Проверить подписку»."
-    )
-    keyboard = [
-        [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")],
-        [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup)
-
-async def show_payment_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🌸 **Челлендж 2.0 — платная версия**\n\n"
-        "Стоимость участия: **700 ₽**\n\n"
-        "✨ **Что ты получаешь:**\n"
-        "✅ 5 утренних заданий\n"
-        "✅ 5 вечерних голосовых разборов\n"
-        "✅ Тест и подбор трека\n"
-        "💎 Рабочая тетрадь в PDF\n"
-        "💎 Бонусное голосовое на 6-й день\n"
-        "💎 Закрытый чат с участницами\n"
-        "💎 Персональная аудио-рефлексия\n\n"
-        "Выбери способ оплаты:"
-    )
-    keyboard = [
-        [InlineKeyboardButton("💳 Оплатить картой", callback_data="pay_card")],
-        [InlineKeyboardButton("📱 Оплатить через СБП", callback_data="pay_sbp")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")],
-        [InlineKeyboardButton("🗓 Начать челлендж бесплатно", callback_data="start_free_challenge")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    await show_main_menu(update, context)
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "🌸 Добро пожаловать в Челлендж 2.0!\n\n"
-        "Ты уже оплатила участие и можешь приступить к прохождению."
+        "Что хочешь сделать?"
     )
     keyboard = [
         [InlineKeyboardButton("🗓 Начать челлендж", callback_data="start_challenge")],
@@ -246,130 +164,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup)
 
-async def start_free_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает бесплатную версию челленджа (без проверки оплаты)."""
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        "🌸 Отлично! Запускаем бесплатную версию челленджа. Давай начнём с теста! 💖"
-    )
-    await asyncio.sleep(1)
-    # Проверяем, не начат ли уже челлендж
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-    if user and user['challenge_started']:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="🌷 Ты уже участвуешь в челлендже."
-        )
-        return
-    
-    # Отмечаем в БД, что челлендж начат (без оплаты)
-    update_user(user_id, challenge_started=True, start_time=datetime.now())
-    await send_challenge_intro(update, context)
-
-# ================== ОПЛАТА ЧЕРЕЗ YOOKASSA ==================
-
-async def create_payment(update: Update, context: ContextTypes.DEFAULT_TYPE, payment_type="card"):
-    """Создаёт платеж через YooKassa."""
-    user_id = update.effective_user.id
-    query = update.callback_query
-    await query.answer()
-
-    # Создаём платеж в YooKassa
-    try:
-        idempotence_key = str(uuid.uuid4())
-        payment = Payment.create({
-            "amount": {
-                "value": "700.00",
-                "currency": "RUB"
-            },
-            "confirmation": {
-                "type": "redirect",
-                "return_url": f"https://t.me/{application.bot.username}"
-            },
-            "capture": True,
-            "description": f"Оплата Челленджа 2.0 для пользователя {user_id}",
-            "payment_method_data": {
-                "type": "bank_card" if payment_type == "card" else "sbp"
-            }
-        }, idempotence_key)
-
-        # Сохраняем платёж в БД
-        save_payment(payment.id, user_id, 700, 'pending')
-        update_user(user_id, payment_id=payment.id)
-
-        # Отправляем ссылку на оплату
-        payment_url = payment.confirmation.confirmation_url
-        text = (
-            "💳 **Ссылка для оплаты создана!**\n\n"
-            f"[Нажмите здесь, чтобы оплатить]({payment_url})\n\n"
-            "После оплаты нажмите кнопку «✅ Я оплатил/а», чтобы активировать доступ."
-        )
-        keyboard = [
-            [InlineKeyboardButton("💳 Перейти к оплате", url=payment_url)],
-            [InlineKeyboardButton("✅ Я оплатил/а", callback_data="check_payment")],
-            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-
-    except Exception as e:
-        logger.error(f"Ошибка создания платежа: {e}")
-        await query.edit_message_text(
-            "❌ Произошла ошибка при создании платежа. Попробуй позже или напиши @valeriasereda."
-        )
-
-async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверяет статус последнего платежа пользователя."""
-    query = update.callback_query
-    await query.answer()
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-
-    if not user or not user['payment_id']:
-        await query.edit_message_text("❌ Платёж не найден. Начни заново через /start.")
-        return
-
-    try:
-        payment = Payment.find_one(user['payment_id'])
-        status = payment.status
-
-        if status == 'succeeded':
-            update_user(user_id, paid=True, payment_date=datetime.now())
-            update_payment_status(user['payment_id'], 'paid')
-
-            await query.edit_message_text(
-                "🌸 **Оплата подтверждена!** 💖\n\n"
-                "Теперь тебе доступен полный Челлендж 2.0 со всеми бонусами.\n\n"
-                "Нажми «Начать челлендж», чтобы приступить."
-            )
-            await show_main_menu(update, context)
-            return
-
-        elif status == 'pending':
-            await query.edit_message_text(
-                "⏳ Платёж ещё не подтверждён. Проверьте статус через несколько минут.\n\n"
-                "Если вы оплатили, но статус не меняется, напишите @valeriasereda."
-            )
-
-        elif status == 'canceled':
-            await query.edit_message_text(
-                "❌ Платёж был отменён. Попробуйте снова через /start."
-            )
-
-        else:
-            await query.edit_message_text(
-                f"Статус платежа: {status}\n\n"
-                "Если вы оплатили, но статус не меняется, напишите @valeriasereda."
-            )
-
-    except Exception as e:
-        logger.error(f"Ошибка проверки платежа: {e}")
-        await query.edit_message_text(
-            "❌ Не удалось проверить статус платежа. Попробуй позже или напиши @valeriasereda."
-        )
-
 # ================== ОБРАБОТЧИКИ КНОПОК ==================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -378,54 +172,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = query.data
 
-    if data == "check_sub":
-        if await is_subscribed(context.bot, user_id):
-            await query.edit_message_text("🌺 Супер! Подписка подтверждена!")
-            await show_payment_options(update, context)
-        else:
-            keyboard = [
-                [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")],
-                [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "💔 Ты ещё не подписалась на канал. Подпишись и нажми «Проверить подписку» снова.",
-                reply_markup=reply_markup
-            )
-        return
-
-    if data == "pay_card":
-        await create_payment(update, context, "card")
-        return
-
-    if data == "pay_sbp":
-        await create_payment(update, context, "sbp")
-        return
-
-    if data == "check_payment":
-        await check_payment(update, context)
-        return
-
     if data == "start_challenge":
         await start_challenge(update, context)
         return
 
-    if data == "start_free_challenge":
-        await start_free_challenge(update, context)
-        return
-
     if data == "get_workbook":
         await send_workbook(update, context)
-        return
-
-    if data == "back_to_menu":
-        user = get_user(user_id)
-        if user and user['paid']:
-            await query.edit_message_text("🌸 Возвращаю в главное меню.")
-            await show_main_menu(update, context)
-        else:
-            await query.edit_message_text("🌸 Возвращаю назад.")
-            await show_payment_options(update, context)
         return
 
     if data.startswith("test_"):
@@ -442,7 +194,6 @@ async def start_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
 
-    # Убираем проверку оплаты — запускаем всегда
     if user['challenge_started']:
         await query.edit_message_text("🌷 Ты уже участвуешь в челлендже.")
         return
@@ -454,19 +205,6 @@ async def start_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     update_user(user_id, challenge_started=True, start_time=datetime.now())
-    await send_question(update, context, 0)
-
-async def send_challenge_intro(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    intro_text = (
-        "🌸 Я рада, что ты решила пройти челлендж «5 дней ясности»!\n\n"
-        "Прежде чем мы начнём, я предлагаю тебе пройти небольшой тест «Индекс потери себя». Он поможет понять, на каком ты сейчас этапе и какой трек подойдёт тебе лучше всего.\n\n"
-        "Тест состоит из 6 вопросов – отвечай честно, здесь нет правильных или неправильных ответов. Только твоя правда.\n\n"
-        "После теста я подберу для тебя индивидуальный трек, и мы начнём челлендж. Готова? 💖"
-    )
-    await context.bot.send_message(chat_id=chat_id, text=intro_text)
-    await asyncio.sleep(2)
-    context.user_data['last_feedback_id'] = None
     await send_question(update, context, 0)
 
 # ================== ТЕСТ (6 вопросов) ==================
@@ -725,7 +463,6 @@ async def schedule_next_morning(chat_id, track, next_day):
     morning_text = MORNING_TEXTS.get((track, next_day), "Утреннее задание для этого дня ещё не готово 🌸")
     schedule_message(chat_id, morning_text, morning_time)
 
-    # Планируем вечер следующего дня
     audio_path = AUDIO_FILES[f"track{track}"][f"day{next_day}_evening"]
     if os.path.exists(audio_path):
         scheduler.add_job(
