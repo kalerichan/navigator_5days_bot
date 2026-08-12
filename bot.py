@@ -227,7 +227,8 @@ async def show_payment_options(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = [
         [InlineKeyboardButton("💳 Оплатить картой", callback_data="pay_card")],
         [InlineKeyboardButton("📱 Оплатить через СБП", callback_data="pay_sbp")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")],
+        [InlineKeyboardButton("🗓 Начать челлендж бесплатно", callback_data="start_free_challenge")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -244,6 +245,28 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup)
+
+async def start_free_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запускает бесплатную версию челленджа (без проверки оплаты)."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "🌸 Отлично! Запускаем бесплатную версию челленджа. Давай начнём с теста! 💖"
+    )
+    await asyncio.sleep(1)
+    # Проверяем, не начат ли уже челлендж
+    user_id = update.effective_user.id
+    user = get_user(user_id)
+    if user and user['challenge_started']:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🌷 Ты уже участвуешь в челлендже."
+        )
+        return
+    
+    # Отмечаем в БД, что челлендж начат (без оплаты)
+    update_user(user_id, challenge_started=True, start_time=datetime.now())
+    await send_challenge_intro(update, context)
 
 # ================== ОПЛАТА ЧЕРЕЗ YOOKASSA ==================
 
@@ -387,6 +410,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start_challenge(update, context)
         return
 
+    if data == "start_free_challenge":
+        await start_free_challenge(update, context)
+        return
+
     if data == "get_workbook":
         await send_workbook(update, context)
         return
@@ -415,10 +442,7 @@ async def start_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
 
-    if not user or not user['paid']:
-        await query.edit_message_text("❌ Для доступа к челленджу необходимо оплатить участие.")
-        return
-
+    # Убираем проверку оплаты — запускаем всегда
     if user['challenge_started']:
         await query.edit_message_text("🌷 Ты уже участвуешь в челлендже.")
         return
@@ -430,6 +454,19 @@ async def start_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     update_user(user_id, challenge_started=True, start_time=datetime.now())
+    await send_question(update, context, 0)
+
+async def send_challenge_intro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    intro_text = (
+        "🌸 Я рада, что ты решила пройти челлендж «5 дней ясности»!\n\n"
+        "Прежде чем мы начнём, я предлагаю тебе пройти небольшой тест «Индекс потери себя». Он поможет понять, на каком ты сейчас этапе и какой трек подойдёт тебе лучше всего.\n\n"
+        "Тест состоит из 6 вопросов – отвечай честно, здесь нет правильных или неправильных ответов. Только твоя правда.\n\n"
+        "После теста я подберу для тебя индивидуальный трек, и мы начнём челлендж. Готова? 💖"
+    )
+    await context.bot.send_message(chat_id=chat_id, text=intro_text)
+    await asyncio.sleep(2)
+    context.user_data['last_feedback_id'] = None
     await send_question(update, context, 0)
 
 # ================== ТЕСТ (6 вопросов) ==================
@@ -764,6 +801,7 @@ MORNING_TEXTS = {
 # ================== ЗАПУСК ==================
 async def main():
     init_db()
+    application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.VOICE, handle_reflection))
