@@ -14,6 +14,27 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ================== ПУТИ К ФАЙЛАМ ==================
+def find_file(filename):
+    possible_paths = [
+        filename,
+        os.path.join('files', filename),
+        os.path.join('app', filename),
+        os.path.join('my_bot', filename),
+        os.path.join('..', filename),
+    ]
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    return None
+
+CHECKLIST_PDF_PATH = find_file("checklist_net.pdf")
+if CHECKLIST_PDF_PATH:
+    logger.info(f"Чек-лист найден: {CHECKLIST_PDF_PATH}")
+else:
+    logger.warning("Чек-лист не найден! Проверь, что файл checklist_net.pdf загружен.")
+
+WORKBOOK_PDF = "files/workbook.pdf"
+
 AUDIO_FILES = {
     "track1": {
         "day1_evening": "files/audio/track1_day1_evening.ogg",
@@ -41,8 +62,6 @@ AUDIO_FILES = {
     }
 }
 
-WORKBOOK_PDF = "files/workbook.pdf"
-
 # ================== БАЗА ДАННЫХ ==================
 def init_db():
     conn = sqlite3.connect('database.db')
@@ -55,6 +74,7 @@ def init_db():
             payment_id TEXT,
             payment_date DATETIME,
             challenge_started BOOLEAN DEFAULT 0,
+            challenge_version TEXT DEFAULT '1.0',
             track INTEGER DEFAULT 0,
             current_day INTEGER DEFAULT 0,
             start_time DATETIME,
@@ -62,9 +82,38 @@ def init_db():
             reflection_sent BOOLEAN DEFAULT 0,
             bonus_sent BOOLEAN DEFAULT 0,
             workbook_sent BOOLEAN DEFAULT 0,
-            score INTEGER DEFAULT 0
+            score INTEGER DEFAULT 0,
+            checklist_sent_time DATETIME,
+            reminder_5min_sent BOOLEAN DEFAULT 0,
+            reminder_1hour_sent BOOLEAN DEFAULT 0
         )
     ''')
+    c.execute("PRAGMA table_info(users)")
+    columns = [col[1] for col in c.fetchall()]
+    if 'reflection_sent' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN reflection_sent BOOLEAN DEFAULT 0")
+    if 'bonus_sent' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN bonus_sent BOOLEAN DEFAULT 0")
+    if 'workbook_sent' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN workbook_sent BOOLEAN DEFAULT 0")
+    if 'score' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN score INTEGER DEFAULT 0")
+    if 'username' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN username TEXT")
+    if 'paid' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN paid BOOLEAN DEFAULT 0")
+    if 'payment_id' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN payment_id TEXT")
+    if 'payment_date' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN payment_date DATETIME")
+    if 'challenge_version' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN challenge_version TEXT DEFAULT '1.0'")
+    if 'checklist_sent_time' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN checklist_sent_time DATETIME")
+    if 'reminder_5min_sent' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN reminder_5min_sent BOOLEAN DEFAULT 0")
+    if 'reminder_1hour_sent' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN reminder_1hour_sent BOOLEAN DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -82,14 +131,18 @@ def get_user(user_id):
             'payment_id': row[3],
             'payment_date': row[4],
             'challenge_started': bool(row[5]),
-            'track': row[6],
-            'current_day': row[7],
-            'start_time': row[8],
-            'finished': bool(row[9]),
-            'reflection_sent': bool(row[10]),
-            'bonus_sent': bool(row[11]),
-            'workbook_sent': bool(row[12]),
-            'score': row[13]
+            'challenge_version': row[6],
+            'track': row[7],
+            'current_day': row[8],
+            'start_time': row[9],
+            'finished': bool(row[10]),
+            'reflection_sent': bool(row[11]),
+            'bonus_sent': bool(row[12]),
+            'workbook_sent': bool(row[13]),
+            'score': row[14],
+            'checklist_sent_time': row[15],
+            'reminder_5min_sent': bool(row[16]),
+            'reminder_1hour_sent': bool(row[17])
         }
     return None
 
@@ -149,46 +202,123 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         create_user(user_id, username)
         user = get_user(user_id)
 
-    await show_main_menu(update, context)
+    if not await is_subscribed(context.bot, user_id):
+        await show_subscription_required(update, context)
+        return
 
-async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Если уже подписан — показываем меню с выбором версии
+    await show_version_choice(update, context)
+
+async def show_subscription_required(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        "🌸 Добро пожаловать в Челлендж 2.0!\n\n"
-        "Что хочешь сделать?"
+        "🌸 Привет, дорогая!\n\n"
+        "Меня зовут Лера, я твой личный навигатор и автор канала о том, как перестать жить для других и начать выбирать себя 💖\n\n"
+        "Чтобы получить доступ к челленджу, подпишись на мой канал.\n\n"
+        "👇 Нажми «Подписаться», а затем «Проверить подписку»."
     )
     keyboard = [
-        [InlineKeyboardButton("🗓 Начать челлендж", callback_data="start_challenge")],
-        [InlineKeyboardButton("📋 Получить рабочую тетрадь", callback_data="get_workbook")],
-        [InlineKeyboardButton("💬 Написать Лере", url=DIAGNOSTIC_LINK)]
+        [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")],
+        [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup)
 
-# ================== ОБРАБОТЧИКИ КНОПОК ==================
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
-    data = query.data
 
-    if data == "start_challenge":
-        await start_challenge(update, context)
+    if await is_subscribed(context.bot, user_id):
+        await query.edit_message_text(
+            "🌺 Супер! Подписка подтверждена! 🎉\n\n"
+            "Сейчас я отправлю тебе чек-лист, а затем расскажу про обновлённый челлендж 💖"
+        )
+        # Ждём 5 секунд и отправляем чек-лист
+        await asyncio.sleep(5)
+        await send_checklist(update, context)
+    else:
+        keyboard = [
+            [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")],
+            [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "💔 Ты ещё не подписалась на канал. Подпишись и нажми «Проверить подписку» снова.",
+            reply_markup=reply_markup
+        )
+
+# ================== ЧЕК-ЛИСТ ==================
+async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    file_path = find_file("checklist_net.pdf")
+    if not file_path:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Ой, файл с чек-листом не найден... Я уже проверяю, что случилось. Попробуй чуть позже, хорошо? 🌸"
+        )
+        logger.error(f"Файл checklist_net.pdf не найден!")
         return
 
-    if data == "get_workbook":
-        await send_workbook(update, context)
-        return
+    try:
+        with open(file_path, 'rb') as f:
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=f,
+                filename="checklist_net.pdf",
+                caption="📋 Держи обещанный чек-лист «Как отказать без чувства вины» 👇\n\nПосмотри внимательно – там много неожиданных открытий 🌸"
+            )
+        now = datetime.now()
+        update_user(user_id, checklist_sent_time=now)
 
-    if data.startswith("test_"):
-        await handle_test_answer(update, context)
-        return
+        # Ждём 5 секунд и отправляем информацию о версиях челленджа
+        await asyncio.sleep(5)
+        await show_version_choice(update, context)
 
-    await query.edit_message_text("Неизвестная команда 🤔")
+    except Exception as e:
+        logger.error(f"Ошибка отправки чек-листа: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Что-то пошло не так при отправке файла. Попробуй ещё раз или напиши мне @valeriasereda, я помогу 🌸"
+        )
+
+# ================== ВЫБОР ВЕРСИИ ЧЕЛЛЕНДЖА ==================
+async def show_version_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+
+    text = (
+        "🌸 У меня вышло обновление — **Челлендж 2.0**!\n\n"
+        "🔥 **Скоро версия 2.0 станет платной**, но пока — тестовый запуск, и ты можешь пройти её **бесплатно**! 💖\n\n"
+        "✨ **Что нового в Челлендже 2.0?**\n\n"
+        "✅ 5 утренних заданий\n"
+        "✅ 5 вечерних голосовых разборов\n"
+        "✅ Тест и подбор трека\n\n"
+        "💎 Рабочая тетрадь в PDF\n"
+        "Один файл на все 5 дней с полями для записей.\n\n"
+        "💎 Бонусное голосовое на 6-й день\n"
+        "«Как закрепить результат и не откатиться назад»\n\n"
+        "💎 Закрытый чат с участницами твоего потока\n"
+        "Общее пространство для поддержки.\n\n"
+        "💎 Персональная аудио-рефлексия от меня на 7-й день\n"
+        "Ты присылаешь голосом свой главный инсайт — я отвечаю персонально.\n\n"
+        "🎁 **Какую версию челленджа ты хочешь пройти?**"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("📖 Челлендж 1.0 (бесплатно)", callback_data="challenge_1.0")],
+        [InlineKeyboardButton("🌟 Челлендж 2.0 (бесплатно, тест)", callback_data="challenge_2.0")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 # ================== ЗАПУСК ЧЕЛЛЕНДЖА ==================
 
-async def start_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE, version="1.0"):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -198,13 +328,25 @@ async def start_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🌷 Ты уже участвуешь в челлендже.")
         return
 
-    await query.edit_message_text(
-        "🌸 Отлично! Давай начнём с теста «Индекс потери себя».\n\n"
-        "Тест состоит из 6 вопросов – отвечай честно, здесь нет правильных или неправильных ответов. Только твоя правда.\n\n"
-        "После теста я подберу для тебя индивидуальный трек, и мы начнём челлендж. Готова? 💖"
-    )
+    update_user(user_id, challenge_started=True, challenge_version=version, start_time=datetime.now())
 
-    update_user(user_id, challenge_started=True, start_time=datetime.now())
+    # В зависимости от версии выбираем текст
+    if version == "2.0":
+        await query.edit_message_text(
+            "🌟 Отлично! Ты выбрала **Челлендж 2.0** — самую полную версию с бонусами и рабочей тетрадью! 💖\n\n"
+            "Давай начнём с теста «Индекс потери себя».\n"
+            "Тест состоит из 6 вопросов – отвечай честно.\n\n"
+            "Готова? 💖"
+        )
+    else:
+        await query.edit_message_text(
+            "📖 Отлично! Ты выбрала **Челлендж 1.0** — классическую версию.\n\n"
+            "Давай начнём с теста «Индекс потери себя».\n"
+            "Тест состоит из 6 вопросов – отвечай честно.\n\n"
+            "Готова? 💖"
+        )
+
+    await asyncio.sleep(2)
     await send_question(update, context, 0)
 
 # ================== ТЕСТ (6 вопросов) ==================
@@ -307,6 +449,7 @@ async def process_test_result(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     user = get_user(user_id)
     score = user['score']
+    version = user['challenge_version']
 
     if 6 <= score <= 9:
         track = 1
@@ -333,12 +476,13 @@ async def process_test_result(update: Update, context: ContextTypes.DEFAULT_TYPE
     await context.bot.send_message(chat_id=update.effective_chat.id, text=result_text)
     await asyncio.sleep(2)
 
-    # Отправляем рабочую тетрадь
-    await send_workbook(update, context)
+    # Если версия 2.0, отправляем рабочую тетрадь
+    if version == "2.0":
+        await send_workbook(update, context)
 
     # Отправляем утро дня 1
     day = 1
-    morning_text = MORNING_TEXTS.get((track, day), "Утреннее задание для этого дня ещё не готово, но скоро будет 🌸")
+    morning_text = MORNING_TEXTS.get((track, day), "Утреннее задание для этого дня ещё не готово 🌸")
     await context.bot.send_message(chat_id=update.effective_chat.id, text=morning_text)
 
     # Планируем вечер дня 1 (через 8 часов)
@@ -348,14 +492,14 @@ async def process_test_result(update: Update, context: ContextTypes.DEFAULT_TYPE
         scheduler.add_job(
             send_evening_audio,
             trigger=DateTrigger(run_date=run_date),
-            args=[update.effective_chat.id, audio_path, track, day]
+            args=[update.effective_chat.id, audio_path, track, day, version]
         )
         logger.info(f"Запланировано вечернее аудио дня 1 на {run_date}")
 
     # Планируем день 2
-    await schedule_next_morning(update.effective_chat.id, track, 2)
+    await schedule_next_morning(update.effective_chat.id, track, 2, version)
 
-async def send_evening_audio(chat_id, audio_path, track, day):
+async def send_evening_audio(chat_id, audio_path, track, day, version):
     try:
         bot = application.bot
         caption = get_voice_caption(track, day)
@@ -364,10 +508,10 @@ async def send_evening_audio(chat_id, audio_path, track, day):
             await bot.send_voice(chat_id=chat_id, voice=f)
         logger.info(f"Вечернее аудио дня {day} отправлено для {chat_id}")
 
-        if day == 5:
+        if day == 5 and version == "2.0":
             await send_bonus_audio(chat_id, track)
         elif day < 5:
-            await schedule_next_morning(chat_id, track, day + 1)
+            await schedule_next_morning(chat_id, track, day + 1, version)
     except Exception as e:
         logger.error(f"Ошибка отправки аудио: {e}")
 
@@ -418,18 +562,15 @@ async def handle_reflection(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     voice = update.message.voice
     if voice:
-        # Сохраняем голосовое сообщение пользователя
         file = await context.bot.get_file(voice.file_id)
         os.makedirs("data/reflections", exist_ok=True)
         file_path = f"data/reflections/{user_id}_{datetime.now().timestamp()}.ogg"
         await file.download_to_drive(file_path)
 
-        # Отправляем уведомление админу
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=f"🎤 Новое голосовое сообщение для рефлексии!\nПользователь: {user_id} (@{user['username']})"
         )
-        # Пересылаем голосовое админу
         await context.bot.forward_message(
             chat_id=ADMIN_ID,
             from_chat_id=user_id,
@@ -442,7 +583,7 @@ async def handle_reflection(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Я прослушаю и отвечу тебе в ближайшее время 💖"
         )
 
-async def schedule_next_morning(chat_id, track, next_day):
+async def schedule_next_morning(chat_id, track, next_day, version):
     if next_day > 5:
         return
     user = get_user(chat_id)
@@ -468,7 +609,7 @@ async def schedule_next_morning(chat_id, track, next_day):
         scheduler.add_job(
             send_evening_audio,
             trigger=DateTrigger(run_date=evening_time),
-            args=[chat_id, audio_path, track, next_day]
+            args=[chat_id, audio_path, track, next_day, version]
         )
         logger.info(f"Запланировано вечернее аудио дня {next_day} на {evening_time}")
 
@@ -535,16 +676,41 @@ MORNING_TEXTS = {
     (3,5): "🕯️ День 5. Первый контакт с желанием\n\nТы долго обслуживала чужие сценарии. Сегодня — только ты.\n\nЗадание:\n- Подумай: что бы ты сделала сегодня, если бы никто не ждал от тебя результата? Не «что полезно», а «что приятно».\n- Выбери одно микро-действие. Очень маленькое. Без цели и смысла. Просто для удовольствия.\n- Сделай это. И не объясняй никому 🌸"
 }
 
+# ================== ОБРАБОТЧИКИ КНОПОК ==================
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    data = query.data
+
+    if data == "check_sub":
+        await check_subscription(update, context)
+        return
+
+    if data == "challenge_1.0":
+        await start_challenge(update, context, "1.0")
+        return
+
+    if data == "challenge_2.0":
+        await start_challenge(update, context, "2.0")
+        return
+
+    if data.startswith("test_"):
+        await handle_test_answer(update, context)
+        return
+
+    await query.edit_message_text("Неизвестная команда 🤔")
+
 # ================== ЗАПУСК ==================
-async def main():
+def main():
     init_db()
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.VOICE, handle_reflection))
     logger.info("Бот запущен и ожидает сообщения...")
-    await application.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
